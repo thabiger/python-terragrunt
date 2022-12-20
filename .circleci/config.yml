@@ -10,6 +10,7 @@ jobs:
       - restore_cache:
           key: v1-dependency-cache-{{ checksum "pyproject.toml" }}
       - python/install-packages:
+          pip-dependency-file: requirements-deploy.txt
           pkg-manager: pip
       - run:
           name: Build

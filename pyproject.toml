@@ -16,6 +16,9 @@ dependencies = [
     'boto3',
 ]
 
+[project.optional-dependencies]
+dev = ["bumpver", "pip-tools", "pytest"]
+
 [tool.bumpver]
 current_version = "0.0.1"
 version_pattern = "MAJOR.MINOR.PATCH"
@@ -28,5 +31,4 @@ push = true
 "pyproject.toml" = [
     'current_version = "{version}"',
 ]
-"src/tha-terragrunt/__init__.py" = ["{version}"]
-
+"src/terragrunt/__init__.py" = ["{version}"]

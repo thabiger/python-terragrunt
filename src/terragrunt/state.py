@@ -26,18 +26,18 @@ class State:
         def search_up():
             if not self.common_rsc:
                 for fd in list(reversed(utils.listfiles(dir=self.path + "/..", way="up", regex=regex))):
-                    self.common_rsc = self.query_object(self.load_hcl(fd), "$..remote_state..config")
+                    self.common_rsc = self.State.query_object(self.load_hcl(fd), "$..remote_state..config")
                     break
             return self.common_rsc
 
         for f in list(reversed(utils.listfiles(dir=self.path, regex=regex))):
             h = self.load_hcl(f)
             key = '/'.join(re.sub(os.path.abspath(self.path + "/.."), '', f).split('/')[0:-1])[1:]
-            rsc = self.query_object(h, "$..remote_state..config")
+            rsc = self.State.query_object(h, "$..remote_state..config")
 
             # if remote_state cannot be found within the directory,
             # try to search the director tree up
-            if not rsc and '${find_in_parent_folders()}' in self.query_object(h, "$..include.path"):
+            if not rsc and '${find_in_parent_folders()}' in self.State.query_object(h, "$..include.path"):
                 rsc = search_up()
 
             sr = s3.get(rsc[0]['bucket'], "%s/terraform.tfstate" % key)
@@ -49,12 +49,16 @@ class State:
         if state:
             return objectpath.Tree(state)
 
+    @staticmethod
     def query_object(self, o, q):
         try:
             op = objectpath.Tree(o)
             return tuple(op.execute(q))
         except Exception as e:
             print ("Failed to query the object")
+
+    def query(self, q):
+        return tuple(self.state.execute(q))
 
     def load_hcl(self, file):
 

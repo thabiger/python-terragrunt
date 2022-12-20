@@ -50,7 +50,7 @@ class State:
             return objectpath.Tree(state)
 
     @staticmethod
-    def query_object(self, o, q):
+    def query_object(o, q):
         try:
             op = objectpath.Tree(o)
             return tuple(op.execute(q))

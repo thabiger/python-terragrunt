@@ -32,6 +32,10 @@ class State:
 
         for f in list(reversed(utils.listfiles(dir=self.path, regex=regex))):
             h = self.load_hcl(f)
+            if not h:
+                logger.error("Couldn't get the state path due to a parsing error. Giving up...")
+                break
+
             key = '/'.join(re.sub(os.path.abspath(self.path + "/.."), '', f).split('/')[0:-1])[1:]
             rsc = State.query_object(h, "$..remote_state..config")
 
@@ -76,7 +80,7 @@ class State:
                 except skippable_exceptions:
                     continue
                 except Exception as e:
-                    print(e)
+                    print("Failed to parse file %s, becouse of %s" % (file, e))
 
     def get_resources(self, type_name, id_name = None):
         """ get resource ids list, based on type_name and id_name

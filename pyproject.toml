@@ -12,8 +12,10 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "objectpath",
+    'objectpath',
     'boto3',
+    'pyhcl',
+    'python-hcl2==4.1.0'
 ]
 
 [project.optional-dependencies]

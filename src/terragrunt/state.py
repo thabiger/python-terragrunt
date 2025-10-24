@@ -25,8 +25,6 @@ class State:
         self.tfstate_key_filename = key_filename
 
         self.data_as_optree = state_as_optree
-        self.data = None
-
         self.data = self.load()
 
     def _builtin_hcl_loads(self, content=None):

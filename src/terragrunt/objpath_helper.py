@@ -1,5 +1,5 @@
 #
-#  Copyright (c) 2022-2025 Tomasz Habiger and and contributors
+#  Copyright (c) 2022-2025 Tomasz Habiger and contributors
 #
 
 import logging

@@ -1,70 +1,36 @@
+#
+#  Copyright (c) 2022-2025 Tomasz Habiger and and contributors
+#
+
 import os
 import json
-import objectpath
 import logging
 import hcl
 import hcl2
 import re
-from . import s3
-from . import utils
 from lark import UnexpectedToken, UnexpectedCharacters
+from .objpath_helper import ObjectPath
+from .process import Process as TerragruntProcess
+from .s3 import S3
 
 logger = logging.getLogger(__name__)
 
 class State:
+    def __init__(self, path=None, path_limit='/', config="root.hcl", key_prefix=None, key_filename='terraform.tfstate', state_as_optree=True):
+        self.path = path if path else os.getcwd()
+        self.path_limit = path_limit
 
-    def __init__(self, path = None):
-        self.path = path
-        self.common_rsc = None
-        self.state = self.get_remote_state_config()
+        self.tfstate_config = config
+        self.tfstate_key_prefix = key_prefix
+        self.tfstate_key_filename = key_filename
 
-    def get_remote_state_config(self):
+        self.data_as_optree = state_as_optree
+        self.data = None
 
-        regex = "terra(form|grunt)\.(tfvars|hcl)$"
-        state = []
+        self.data = self.load()
 
-        def search_up():
-            if not self.common_rsc:
-                for fd in list(reversed(utils.listfiles(dir=self.path + "/..", way="up", regex=regex))):
-                    self.common_rsc = State.query_object(self.load_hcl(fd), "$..remote_state..config")
-                    break
-            return self.common_rsc
-
-        for f in list(reversed(utils.listfiles(dir=self.path, regex=regex))):
-            h = self.load_hcl(f)
-            if not h:
-                logger.error("Couldn't get the state path due to a parsing error. Giving up...")
-                break
-
-            key = '/'.join(re.sub(os.path.abspath(self.path + "/.."), '', f).split('/')[0:-1])[1:]
-            rsc = State.query_object(h, "$..remote_state..config")
-
-            # if remote_state cannot be found within the directory,
-            # try to search the director tree up
-            if not rsc and '${find_in_parent_folders()}' in State.query_object(h, "$..include.path"):
-                rsc = search_up()
-
-            sr = s3.get(rsc[0]['bucket'], "%s/terraform.tfstate" % key)
-            if sr:
-              state.append(json.loads(sr))
-            else:
-                logger.error("Couldn't find a state file in expected path. Terraform code not initiated yet or deprecated.")
-
-        if state:
-            return objectpath.Tree(state)
-
-    @staticmethod
-    def query_object(o, q):
-        try:
-            op = objectpath.Tree(o)
-            return tuple(op.execute(q))
-        except Exception as e:
-            print ("Failed to query the object")
-
-    def query(self, q):
-        return tuple(self.state.execute(q))
-
-    def load_hcl(self, file):
+    def _builtin_hcl_loads(self, content=None):
+        rv = None
 
         skippable_exceptions = (
             UnexpectedToken,
@@ -72,37 +38,175 @@ class State:
             UnicodeDecodeError
         )
 
+        config_data = re.sub("\s+\\?", " ?", content, re.MULTILINE)
+        for parser in [hcl2.loads, hcl.loads]:
+            try:
+                rv = parser(config_data)
+            except skippable_exceptions:
+                continue
+            except Exception as e:
+                print(f"Failed to parse HCL content: {e}")
+
+        return rv
+
+    def _builtin_hcl_load(self, file=''):
+        rv = None
+
+        logger.debug(f"loading HCL file: {file}")
         with open(file) as f:
-            c = re.sub("\s+\\?", " ?", f.read(), re.MULTILINE)
-            for h in [hcl2.loads, hcl.loads]:
-                try:
-                   return h(c)
-                except skippable_exceptions:
-                    continue
-                except Exception as e:
-                    print("Failed to parse file %s, becouse of %s" % (file, e))
+            rv = self._builtin_hcl_loads(f.read())
 
-    def get_resources(self, type_name, id_name = None):
-        """ get resource ids list, based on type_name and id_name
+        return rv
 
-            type_name: str, ie. aws_instance, aws_autoscaling_group, aws_db_instance. etc.
-            id_name: id attribute identificator of the resource. most often it is just 'id', but there are resources
-                    like 'aws_spot_instance_request', where id refers to a request id, not an instance id.
-                    if we'd like to get instance id, we have to provide alternative id name, which is 'spot_instance_id'
-                    in this case.
+    def _builtin_search_file(self, fname=""):
+        cp = os.path.abspath(self.path)
+        relpath = []
 
-            returns: list of resources ids, ie. for ec2: ('i-08bf03c667b7eab43', 'i-8bg023c6d66bheac42')
+        logger.debug(f"searching for file: {fname}")
+        for d in list(filter(None, list(reversed(cp.removeprefix(self.path_limit).split('/'))))):
+            relpath.insert(0, d)
+
+            cp = cp.removesuffix("/{}".format(d))
+            fpath = "{}/{}".format(cp, fname)
+
+            logger.debug(f"checking path: {fpath}")
+            if os.path.exists(fpath) and os.path.isfile(fpath) and os.access(fpath, os.F_OK | os.R_OK):
+                return fpath, '/'.join(relpath)
+
+        return None, None
+
+    def _builtin_try_render(self, config=None):
+        rv = None
+        config_data = None
+        config_created = False
+
+        tg = TerragruntProcess(cwd=self.path, cmd="render")
+        cfg = f"{self.path}/terragrunt.hcl"
+
+        if tg.version >= (0, 77, 18):
+            if not os.path.exists(cfg) or not os.path.isfile(cfg):
+                with open(cfg, "w") as f:
+                    f.write(f"include \"root\" {{\n  path = find_in_parent_folders(\"{config}\")\n}}\n")
+                config_created = True
+                logger.debug(f"rendered temporal configuration: {cfg}")
+
+            tg.exec(live=False)
+            try:
+                config_data = self._builtin_hcl_loads(tg.output.stdout)
+            except Exception as e:
+                logger.warning(f"Cannot parse rendered Terragrunt config: {e}")
+
+            if config_created:
+                os.remove(cfg)
+                logger.debug(f"removed temporal configuration: {cfg}")
+
+            if config_data:
+                tmp = ObjectPath.query(config_data, "$..remote_state..config")
+                if tmp:
+                    rv = {
+                        'bucket': tmp[0]['bucket'],
+                        'key': tmp[0]['key']
+                    }
+                    logger.debug(f"got OpenTofu/Terraform state location: {rv}")
+        else:
+            logger.warning(
+                "Cannot use 'terragrunt render' for state configuration discovery:\n"
+                "terragrunt version 0.77.18 or newer is required (installed version: {})".format('.'.join(map(str, tg.version)))
+            )
+
+        return rv
+
+    def _builtin_try_search(self, config=None):
+        rv = None
+        config_data = None
+
+        tfstate_config, tfstate_key_relpath = self._builtin_search_file(config)
+        if tfstate_config:
+            try:
+                config_data = self._builtin_hcl_load(tfstate_config)
+            except Exception as e:
+                logger.warning(f"Cannot parse Terragrunt config file {tfstate_config}: {e}")
+
+            if config_data:
+                tmp = ObjectPath.query(config_data, "$..remote_state..config")
+                if tmp:
+                    rv = {
+                        'bucket': tmp[0]['bucket'],
+                        'key': '/'.join(filter(None, [self.tfstate_key_prefix, tfstate_key_relpath, self.tfstate_key_filename]))
+                    }
+                    logger.debug(f"got (calculated) OpenTofu/Terraform state location: {rv}")
+
+        return rv
+
+    def load(self):
+        rv = None
+        tfstate_data = []
+        tfstate_json = None
+
+        cfg_list = filter(None, [
+            self.tfstate_config,
+            "root.hcl",
+            "terragrunt.hcl",
+            "terraform.tfvars"
+        ])
+
+        for f in cfg_list:
+            logger.debug(f"(mode:render) checking for terragrunt's configuration: {f}")
+            rv = self._builtin_try_render(f)
+            if rv:
+                break
+
+        if rv is None:
+            for f in cfg_list:
+                logger.debug(f"(mode:search) checking for terragrunt's configuration: {f}")
+                rv = self._builtin_try_search(f)
+                if rv:
+                    break
+
+        if rv is None:
+            logger.error("Cannot extract any information about OpenTofu/Terraform state location")
+
+        tfstate_json = S3.get(rv['bucket'], rv['key'])
+        if tfstate_json:
+            rv = json.loads(tfstate_json)
+            if self.data_as_optree:
+                tfstate_data.append(rv)
+                rv = ObjectPath.load(tfstate_data)
+        else:
+            logger.error(f"Couldn't load OpenTofu/Terraform state from S3 location s3://{rv['bucket']}/{rv['key']}")
+            rv = None
+
+        return rv
+
+    def get_resources(self, type_name, id_name=None):
+        """
+        Get list of resource IDs
+
+        :param type_name: string, ie. "aws_instance", "aws_autoscaling_group", "aws_db_instance", etc.
+        :param id_name: ID attribute identificator for a resource. Most often it is just "id", but
+            there are resources like "aws_spot_instance_request", where ID refers to a request ID
+            and not an instance ID. If we'd like to get an instance ID, we have to provide alternative
+            id_name, like "spot_instance_id" in this case.
+        :return: list of resource IDs, ie. for EC2: ('i-08bf03c667b7eab43', 'i-8bg023c6d66bheac42', ...)
         """
 
         id_name = id_name if id_name else 'id'
 
         try:
-            if re.match('0.11.[0-9]+', self.state.execute("$..terraform_version[0]")):
-                return tuple(self.state.execute("$..modules.resources..*[@.type is '{}'].primary.{}".format(type_name, id_name)))
+            if re.match('0.11.[0-9]+', self.data.execute("$..terraform_version[0]")):
+                return tuple(
+                    self.data.execute("$..modules.resources..*[@.type is '{}'].primary.{}".format(
+                        type_name, id_name
+                    ))
+                )
             else:
-                return tuple(self.state.execute("$..resources[@.type is '{}']..instances.attributes.{}".format(type_name, id_name)))
+                return tuple(
+                    self.data.execute("$..resources[@.type is '{}']..instances.attributes.{}".format(
+                        type_name, id_name
+                    ))
+                )
         except AttributeError:
             return None
 
-    def empty(self):
-        return False if self.state else True
+    def is_empty(self):
+        return False if self.data else True

@@ -176,6 +176,9 @@ class State:
 
         return rv
 
+    def query(self, q=None):
+        return ObjectPath.query(obj=self.data, q=q)
+
     def get_resources(self, type_name, id_name=None):
         """
         Get list of resource IDs

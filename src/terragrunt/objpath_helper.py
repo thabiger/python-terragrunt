@@ -24,7 +24,7 @@ class ObjectPath:
         rv = None
 
         try:
-            tmp = ObjectPath.load(obj)
+            tmp = ObjectPath.load(obj) if (type(obj) is not objectpath.core.interpreter.Tree) else obj
             rv = tuple(tmp.execute(q))
         except Exception as e:
             logger.error(f"Failed to execute query \"{q}\" on selected object: {e}")

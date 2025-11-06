@@ -43,7 +43,7 @@ class State:
             except skippable_exceptions:
                 continue
             except Exception as e:
-                print(f"Failed to parse HCL content: {e}")
+                logger.warning(f"Failed to parse HCL content: {e}")
 
         return rv
 
@@ -107,10 +107,7 @@ class State:
                     }
                     logger.debug(f"got OpenTofu/Terraform state location: {rv}")
         else:
-            logger.warning(
-                "Cannot use 'terragrunt render' for state configuration discovery:\n"
-                "terragrunt version 0.77.18 or newer is required (installed version: {})".format('.'.join(map(str, tg.version)))
-            )
+            logger.debug("cannot use 'terragrunt render': terragrunt version {} < 0.77.18".format('.'.join(map(str, tg.version))))
 
         return rv
 
@@ -141,12 +138,12 @@ class State:
         tfstate_data = []
         tfstate_json = None
 
-        cfg_list = filter(None, [
+        cfg_list = list(filter(None, [
             self.tfstate_config,
             "root.hcl",
             "terragrunt.hcl",
             "terraform.tfvars"
-        ])
+        ]))
 
         for f in cfg_list:
             logger.debug(f"(mode:render) checking for terragrunt's configuration: {f}")

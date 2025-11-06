@@ -24,6 +24,8 @@ class State:
         self.tfstate_key_prefix = key_prefix
         self.tfstate_key_filename = key_filename
 
+        self.tg = TerragruntProcess(cwd=self.path, cmd="render")
+
         self.data_as_optree = state_as_optree
         self.data = self.load()
 
@@ -43,7 +45,10 @@ class State:
             except skippable_exceptions:
                 continue
             except Exception as e:
-                logger.warning(f"Failed to parse HCL content: {e}")
+                if rv is not None:
+                    logger.warning("Exception occured while parsing HCL content - some data may be incomplete")
+                else:
+                    logger.error(f"Exception occured while parsing HCL content: {e}")
 
         return rv
 
@@ -78,21 +83,18 @@ class State:
         config_data = None
         config_created = False
 
-        tg = TerragruntProcess(cwd=self.path, cmd="render")
         cfg = f"{self.path}/terragrunt.hcl"
 
-        if tg.version >= (0, 77, 18):
+        if self.tg.version >= (0, 77, 18):
             if not os.path.exists(cfg) or not os.path.isfile(cfg):
                 with open(cfg, "w") as f:
                     f.write(f"include \"root\" {{\n  path = find_in_parent_folders(\"{config}\")\n}}\n")
+
                 config_created = True
                 logger.debug(f"rendered temporal configuration: {cfg}")
 
-            tg.exec(live=False)
-            try:
-                config_data = self._builtin_hcl_loads(tg.output.stdout)
-            except Exception as e:
-                logger.warning(f"Cannot parse rendered Terragrunt config: {e}")
+            self.tg.exec(live=False)
+            config_data = self._builtin_hcl_loads(self.tg.output.stdout)
 
             if config_created:
                 os.remove(cfg)
@@ -107,7 +109,7 @@ class State:
                     }
                     logger.debug(f"got OpenTofu/Terraform state location: {rv}")
         else:
-            logger.debug("cannot use 'terragrunt render': terragrunt version {} < 0.77.18".format('.'.join(map(str, tg.version))))
+            logger.debug("cannot use 'terragrunt render': terragrunt version {} < 0.77.18".format('.'.join(map(str, self.tg.version))))
 
         return rv
 
@@ -138,24 +140,28 @@ class State:
         tfstate_data = []
         tfstate_json = None
 
-        cfg_list = list(filter(None, [
-            self.tfstate_config,
+        cfg_list = [
             "root.hcl",
-            "terragrunt.hcl",
-            "terraform.tfvars"
-        ]))
+            "terragrunt.hcl"
+        ]
+
+        if self.tfstate_config not in cfg_list:
+            cfg_list.insert(0, self.tfstate_config)
 
         for f in cfg_list:
             logger.debug(f"(mode:render) checking for terragrunt's configuration: {f}")
             rv = self._builtin_try_render(f)
             if rv:
+                logger.debug(f"(mode:render) extracted state configuration from rendered content using {f}")
                 break
 
         if rv is None:
+            cfg_list.insert(1, "terraform.tfvars")
             for f in cfg_list:
                 logger.debug(f"(mode:search) checking for terragrunt's configuration: {f}")
                 rv = self._builtin_try_search(f)
                 if rv:
+                    logger.debug(f"(mode:search) extracted state configuration from file {f}")
                     break
 
         if rv is None:

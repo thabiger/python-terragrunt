@@ -7,7 +7,7 @@ name = "tha-terragrunt"
 description = "Module used to interact with Terragrunt and OpenTofu/Terraform state data."
 readme = "README.md"
 version = "0.2.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -15,9 +15,9 @@ classifiers = [
 
 dependencies = [
     'objectpath>=0.6.1',
-    'boto3==1.40.56',
-    'pyhcl==0.4.5',
-    'python-hcl2==7.3.1'
+    'boto3>=1.40.56',
+    'pyhcl>=0.4.5',
+    'python-hcl2>=7.3.1'
 ]
 
 [project.optional-dependencies]

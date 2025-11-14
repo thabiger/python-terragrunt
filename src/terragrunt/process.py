@@ -28,19 +28,22 @@ class Process:
         self.version = self.get_version()
 
     def get_version(self):
-        cmd = [TERRAGRUNT_BINARY, "-v"]
+        rv = None
 
+        cmd = [TERRAGRUNT_BINARY, "-v"]
         try:
-            rv = re.search(
+            rematch = re.search(
                 r'(\d+)\.(\d+)\.(\d+)',
                 run(cmd, cwd=self.tg_cwd, capture_output=True, text=True).stdout
             )
+            rv = int(rematch.group(1)), int(rematch.group(2)), int(rematch.group(3))
+            logger.debug(f"got terragrunt's version signature: {rematch.group(0)}")
         except CalledProcessError as e:
             logger.error(f"Cannot run terragrunt process to determine its version: {e}")
-            raise
+        except AttributeError as e:
+            logger.error(f"Could not extract valid terragrunt's version: {e}")
 
-        logger.debug(f"got terragrunt's version signature: {rv.group(0)}")
-        return int(rv.group(1)), int(rv.group(2)), int(rv.group(3))
+        return rv
 
     def exec(self, live=False, std=False):
         rv = 0

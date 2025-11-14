@@ -46,9 +46,9 @@ class State:
                 continue
             except Exception as e:
                 if rv is not None:
-                    logger.warning("Exception occured while parsing HCL content - some data may be incomplete")
+                    logger.warning("Exception occurred while parsing HCL content - some data may be incomplete")
                 else:
-                    logger.error(f"Exception occured while parsing HCL content: {e}")
+                    logger.error(f"Exception occurred while parsing HCL content: {e}")
 
         return rv
 
@@ -80,25 +80,25 @@ class State:
 
     def _builtin_try_render(self, config=None):
         rv = None
-        config_data = None
         config_created = False
 
         cfg = f"{self.path}/terragrunt.hcl"
 
         if self.tg.version >= (0, 77, 18):
-            if not os.path.exists(cfg) or not os.path.isfile(cfg):
-                with open(cfg, "w") as f:
-                    f.write(f"include \"root\" {{\n  path = find_in_parent_folders(\"{config}\")\n}}\n")
+            try:
+                if not os.path.exists(cfg) or not os.path.isfile(cfg):
+                    with open(cfg, "w") as f:
+                        f.write(f"include \"root\" {{\n  path = find_in_parent_folders(\"{config}\")\n}}\n")
 
-                config_created = True
-                logger.debug(f"rendered temporal configuration: {cfg}")
+                    config_created = True
+                    logger.debug(f"rendered temporal configuration: {cfg}")
 
-            self.tg.exec(live=False)
-            config_data = self._builtin_hcl_loads(self.tg.output.stdout)
-
-            if config_created:
-                os.remove(cfg)
-                logger.debug(f"removed temporal configuration: {cfg}")
+                self.tg.exec(live=False)
+                config_data = self._builtin_hcl_loads(self.tg.output.stdout)
+            finally:
+                if config_created and os.path.exists(cfg) and os.path.isfile(cfg):
+                    os.remove(cfg)
+                    logger.debug(f"removed temporal configuration: {cfg}")
 
             if config_data:
                 tmp = ObjectPath.query(config_data, "$..remote_state..config")
@@ -166,16 +166,16 @@ class State:
 
         if rv is None:
             logger.error("Cannot extract any information about OpenTofu/Terraform state location")
-
-        tfstate_json = S3.get(rv['bucket'], rv['key'])
-        if tfstate_json:
-            rv = json.loads(tfstate_json)
-            if self.data_as_optree:
-                tfstate_data.append(rv)
-                rv = ObjectPath.load(tfstate_data)
         else:
-            logger.error(f"Couldn't load OpenTofu/Terraform state from S3 location s3://{rv['bucket']}/{rv['key']}")
-            rv = None
+            tfstate_json = S3.get(rv['bucket'], rv['key'])
+            if tfstate_json:
+                rv = json.loads(tfstate_json)
+                if self.data_as_optree:
+                    tfstate_data.append(rv)
+                    rv = ObjectPath.load(tfstate_data)
+            else:
+                logger.error(f"Couldn't load OpenTofu/Terraform state from S3 location s3://{rv['bucket']}/{rv['key']}")
+                rv = None
 
         return rv
 

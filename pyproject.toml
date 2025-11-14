@@ -4,25 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tha-terragrunt"
-description = "Module to execute and obtain terragrunt state in order to perform further operation on services' resources through the AWS API."
-version = "0.1.8"
+description = "Module used to interact with Terragrunt and OpenTofu/Terraform state data."
 readme = "README.md"
-requires-python = ">=3.8"
+version = "0.2.0"
+requires-python = ">=3.10"
+
 classifiers = [
     "Programming Language :: Python :: 3",
 ]
+
 dependencies = [
-    'objectpath',
-    'boto3',
-    'pyhcl',
-    'python-hcl2==4.2.0'
+    'objectpath>=0.6.1',
+    'boto3>=1.40.56',
+    'pyhcl>=0.4.5',
+    'python-hcl2>=7.3.1'
 ]
 
 [project.optional-dependencies]
 dev = ["bumpver", "pip-tools", "pytest"]
 
 [tool.bumpver]
-current_version = "0.1.8"
+current_version = "0.2.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "bump version {old_version} -> {new_version}"
 commit = true
@@ -34,4 +36,5 @@ push = true
     'current_version = "{version}"',
 	'version = "{version}"'
 ]
+
 "src/terragrunt/__init__.py" = ["{version}"]

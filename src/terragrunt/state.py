@@ -24,7 +24,7 @@ class State:
         self.tfstate_key_prefix = key_prefix
         self.tfstate_key_filename = key_filename
 
-        self.tg = TerragruntProcess(cwd=self.path, cmd="render")
+        self.tg = TerragruntProcess(cwd=self.path, cmd="render --format=json")
 
         self.data_as_optree = state_as_optree
         self.data = self.load()
@@ -38,17 +38,24 @@ class State:
             UnicodeDecodeError
         )
 
-        config_data = re.sub("\s+\\?", " ?", content, re.MULTILINE)
+        config_data = re.sub(r"\s+\?", " ?", content, re.MULTILINE)
         for parser in [hcl2.loads, hcl.loads]:
             try:
+                logging.debug(f"trying parser {parser.__module__}.{parser.__name__}")
                 rv = parser(config_data)
             except skippable_exceptions:
+                if rv is not None:
+                    logger.debug("skippable exception occurred while parsing HCL content, returning parsed data")
+                    break
                 continue
             except Exception as e:
                 if rv is not None:
-                    logger.warning("Exception occurred while parsing HCL content - some data may be incomplete")
+                    logger.warning(f"Unskippable exception occurred while parsing HCL content: {e}; HCL content has "
+                                   f"been parsed, but some data may be incomplete")
+                    break
                 else:
-                    logger.error(f"Exception occurred while parsing HCL content: {e}")
+                    logger.error(f"Unskippable exception occurred while parsing HCL content: {e}; HCL content could "
+                                 f"not be parsed with parser {parser.__module__}.{parser.__name__}")
 
         return rv
 
@@ -91,23 +98,32 @@ class State:
                         f.write(f"include \"root\" {{\n  path = find_in_parent_folders(\"{config}\")\n}}\n")
 
                     config_created = True
-                    logger.debug(f"rendered temporal configuration: {cfg}")
+                    logger.debug(f"rendered temporal configuration: {cfg} (with included {config})")
+                else:
+                    logger.debug(f"{cfg} already exists, no need for temporal configuration")
 
                 self.tg.exec(live=False)
-                config_data = self._builtin_hcl_loads(self.tg.output.stdout)
+
+                try:
+                    config_data = json.loads(self.tg.output.stdout)
+                except json.JSONDecodeError as e:
+                    logger.debug(f"parsing rendered JSON failed: {e} (possibly due missing or invalid included "
+                                 f"configuration file: {config})")
+                    return rv
             finally:
                 if config_created and os.path.exists(cfg) and os.path.isfile(cfg):
                     os.remove(cfg)
                     logger.debug(f"removed temporal configuration: {cfg}")
 
             if config_data:
-                tmp = ObjectPath.query(config_data, "$..remote_state..config")
-                if tmp:
+                if tmp := config_data.get('remote_state', None).get('config', None):
                     rv = {
-                        'bucket': tmp[0]['bucket'],
-                        'key': tmp[0]['key']
+                        'bucket': tmp['bucket'],
+                        'key': tmp['key']
                     }
                     logger.debug(f"got OpenTofu/Terraform state location: {rv}")
+                else:
+                    logger.error(f"Missing required state configuration block in Terragrunt's rendered settings")
         else:
             logger.debug("cannot use 'terragrunt render': terragrunt version {} < 0.77.18".format('.'.join(map(str, self.tg.version))))
 
@@ -132,6 +148,8 @@ class State:
                         'key': '/'.join(filter(None, [self.tfstate_key_prefix, tfstate_key_relpath, self.tfstate_key_filename]))
                     }
                     logger.debug(f"got (calculated) OpenTofu/Terraform state location: {rv}")
+                else:
+                    logger.debug(f"cannot get (calculated) OpenTofu/Terraform state location")
 
         return rv
 
@@ -149,10 +167,10 @@ class State:
             cfg_list.insert(0, self.tfstate_config)
 
         for f in cfg_list:
-            logger.debug(f"(mode:render) checking for terragrunt's configuration: {f}")
+            logger.debug("(mode:render) attempting to get state configuration via rendered Terragrunt configuration")
             rv = self._builtin_try_render(f)
             if rv:
-                logger.debug(f"(mode:render) extracted state configuration from rendered content using {f}")
+                logger.debug("(mode:render) extracted state configuration from rendered content")
                 break
 
         if rv is None:
@@ -197,7 +215,7 @@ class State:
         id_name = id_name if id_name else 'id'
 
         try:
-            if re.match('0.11.[0-9]+', self.data.execute("$..terraform_version[0]")):
+            if re.match(r'0.11.[0-9]+', self.data.execute("$..terraform_version[0]")):
                 return tuple(
                     self.data.execute("$..modules.resources..*[@.type is '{}'].primary.{}".format(
                         type_name, id_name

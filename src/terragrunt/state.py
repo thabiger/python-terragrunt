@@ -16,7 +16,8 @@ from .s3 import S3
 logger = logging.getLogger(__name__)
 
 class State:
-    def __init__(self, path=None, path_limit='/', config="root.hcl", key_prefix=None, key_filename='terraform.tfstate', state_as_optree=True):
+    def __init__(self, path=None, path_limit='/', config="root.hcl", key_prefix=None, key_filename='terraform.tfstate',
+                 state_as_optree=True, disable_render=False):
         self.path = path if path else os.getcwd()
         self.path_limit = path_limit
 
@@ -24,6 +25,7 @@ class State:
         self.tfstate_key_prefix = key_prefix
         self.tfstate_key_filename = key_filename
 
+        self.tg_disable_render = disable_render
         self.tg = TerragruntProcess(cwd=self.path, cmd="render --format=json")
 
         self.data_as_optree = state_as_optree
@@ -88,6 +90,10 @@ class State:
     def _builtin_try_render(self, config=None):
         rv = None
         config_created = False
+
+        if self.tg_disable_render:
+            logger.debug("state location discovery via configuration rendering disabled")
+            return rv
 
         cfg = f"{self.path}/terragrunt.hcl"
 
